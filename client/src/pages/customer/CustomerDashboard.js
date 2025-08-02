@@ -1,25 +1,38 @@
 // client/src/pages/customer/CustomerDashboard.js
+
 import React, { useState, useEffect } from "react";
 import api from "../../services/api";
 import useAuth from "../../hooks/useAuth";
 import io from "socket.io-client";
+import { useJsApiLoader } from "@react-google-maps/api";
+import MapComponent from "../../components/common/MapComponent";
+
+const mapContainerStyle = {
+  width: "100%",
+  height: "192px",
+};
 
 const CustomerDashboard = () => {
-  const [parcels, setParcels] = useState([]); // [cite: 132]
+  const [parcels, setParcels] = useState([]);
   const [form, setForm] = useState({
     pickupAddress: "",
     deliveryAddress: "",
     parcelDetails: { type: "Document", size: "Small" },
     paymentType: "Prepaid",
     codAmount: 0,
-  }); // [cite: 133]
-  const { logout, user } = useAuth();
+  });
+  const { logout } = useAuth();
+
+  const { isLoaded } = useJsApiLoader({
+    id: "google-map-script-customer",
+    googleMapsApiKey: process.env.REACT_APP_Maps_API_KEY,
+    libraries: ["geocoding"],
+  });
 
   useEffect(() => {
     fetchHistory();
     const socket = io("http://localhost:5001");
     socket.on("status_update", (data) => {
-      // [cite: 134]
       setParcels((prev) =>
         prev.map((p) =>
           p._id === data.parcelId
@@ -40,31 +53,31 @@ const CustomerDashboard = () => {
       );
     });
     return () => socket.disconnect();
-  }, []); // [cite: 135]
+  }, []);
 
   const fetchHistory = async () => {
     try {
-      const { data } = await api.get("/parcels/history"); // [cite: 136]
-      setParcels(data); // [cite: 137]
+      const { data } = await api.get("/parcels/history");
+      setParcels(data);
     } catch (error) {
-      console.error("Failed to fetch history", error); // [cite: 137]
+      console.error("Failed to fetch history", error);
     }
   };
 
   const handleBooking = async (e) => {
-    e.preventDefault(); // [cite: 138]
+    e.preventDefault();
     try {
-      await api.post("/parcels", form); // [cite: 139]
+      await api.post("/parcels", form);
       setForm({
         pickupAddress: "",
         deliveryAddress: "",
         parcelDetails: { type: "Document", size: "Small" },
         paymentType: "Prepaid",
         codAmount: 0,
-      }); // [cite: 140]
-      fetchHistory(); // [cite: 140]
+      });
+      fetchHistory();
     } catch (error) {
-      console.error("Booking failed", error); // [cite: 141]
+      console.error("Booking failed", error);
     }
   };
 
@@ -74,11 +87,11 @@ const CustomerDashboard = () => {
       setForm((prev) => ({
         ...prev,
         parcelDetails: { ...prev.parcelDetails, [name]: value },
-      })); // [cite: 143]
+      }));
     } else if (name === "codAmount") {
       setForm((prev) => ({ ...prev, [name]: parseFloat(value) || 0 }));
     } else {
-      setForm((prev) => ({ ...prev, [name]: value })); // [cite: 144]
+      setForm((prev) => ({ ...prev, [name]: value }));
     }
   };
 
@@ -213,13 +226,10 @@ const CustomerDashboard = () => {
                       </div>
                       <div className="mt-4 border-t pt-4">
                         <h4 className="font-semibold text-sm mb-2">
-                          Real-time Map Tracking{" "}
+                          Route Overview
                         </h4>
-                        <div className="h-48 bg-gray-200 rounded-md flex items-center justify-center">
-                          <p className="text-gray-500">
-                            Map placeholder. Integrate @react-google-maps/api
-                            here.
-                          </p>
+                        <div style={mapContainerStyle}>
+                          <MapComponent isLoaded={isLoaded} parcel={p} />
                         </div>
                       </div>
                     </div>

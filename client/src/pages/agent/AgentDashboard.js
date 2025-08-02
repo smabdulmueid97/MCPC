@@ -1,34 +1,48 @@
 // client/src/pages/agent/AgentDashboard.js
+
 import React, { useState, useEffect } from "react";
 import api from "../../services/api";
 import useAuth from "../../hooks/useAuth";
+import { useJsApiLoader } from "@react-google-maps/api";
+import MapComponent from "../../components/common/MapComponent";
+
+const mapContainerStyle = {
+  width: "100%",
+  height: "192px",
+  marginTop: "1rem",
+};
 
 const AgentDashboard = () => {
-  const [parcels, setParcels] = useState([]); // [cite: 155]
-  const { logout } = useAuth(); // [cite: 155]
+  const [parcels, setParcels] = useState([]);
+  const { logout } = useAuth();
+
+  const { isLoaded } = useJsApiLoader({
+    id: "google-map-script-agent",
+    googleMapsApiKey: process.env.REACT_APP_Maps_API_KEY,
+    libraries: ["geocoding"],
+  });
 
   useEffect(() => {
     const fetchAssignedParcels = async () => {
       try {
-        const { data } = await api.get("/agent/parcels"); // [cite: 156]
-        setParcels(data); // [cite: 156]
+        const { data } = await api.get("/agent/parcels");
+        setParcels(data);
       } catch (error) {
-        console.error("Failed to fetch assigned parcels", error); // [cite: 156]
+        console.error("Failed to fetch assigned parcels", error);
       }
     };
     fetchAssignedParcels();
-  }, []); // [cite: 157]
+  }, []);
 
   const handleStatusUpdate = async (parcelId, status) => {
-    // A mock location; in a real app, this would come from the device's GPS.
     const location = "Updated Location";
     try {
-      await api.put(`/agent/parcels/${parcelId}/status`, { status, location }); // [cite: 158]
-      setParcels(
-        (prev) => prev.map((p) => (p._id === parcelId ? { ...p, status } : p)) // [cite: 159]
+      await api.put(`/agent/parcels/${parcelId}/status`, { status, location });
+      setParcels((prev) =>
+        prev.map((p) => (p._id === parcelId ? { ...p, status } : p))
       );
     } catch (error) {
-      console.error("Failed to update status", error); // [cite: 160]
+      console.error("Failed to update status", error);
     }
   };
 
@@ -52,44 +66,55 @@ const AgentDashboard = () => {
           <h2 className="text-xl font-semibold mb-4 text-gray-800">
             My Assigned Parcels
           </h2>
-          <p className="text-gray-600">
-            Note: An optimized delivery route can be generated using Google Maps
-            API.{" "}
-          </p>
+          <p className="text-gray-600"></p>
         </div>
         {parcels.length > 0 ? (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
             {parcels.map((p) => (
-              <div key={p._id} className="bg-white p-5 rounded-lg shadow">
-                <div className="mb-4">
-                  <p className="font-mono text-sm text-gray-500">{p._id}</p>
-                  <p className="text-gray-700 mt-2">
-                    <span className="font-bold">From:</span> {p.pickupAddress}
-                  </p>
-                  <p className="text-gray-700">
-                    <span className="font-bold">To:</span> {p.deliveryAddress}
-                  </p>
-                  <p className="text-gray-700">
-                    <span className="font-bold">Payment:</span> {p.paymentType}{" "}
-                    {p.paymentType === "COD" ? `($${p.codAmount})` : ""}
-                  </p>
-                  <p className="mt-2 text-lg">
-                    <span className="font-bold">Status:</span>{" "}
-                    <strong className="text-indigo-600">{p.status}</strong>
-                  </p>
-                </div>
+              <div
+                key={p._id}
+                className="bg-white p-5 rounded-lg shadow flex flex-col justify-between"
+              >
                 <div>
-                  <select
-                    onChange={(e) => handleStatusUpdate(p._id, e.target.value)}
-                    className="w-full px-3 py-2 border bg-white border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    disabled={p.status === "Delivered" || p.status === "Failed"}
-                  >
-                    <option value="">-- Update Status --</option>
-                    <option value="Picked Up">Picked Up</option>
-                    <option value="In Transit">In Transit</option>
-                    <option value="Delivered">Delivered</option>
-                    <option value="Failed">Failed</option>
-                  </select>
+                  <div className="mb-4">
+                    <p className="font-mono text-sm text-gray-500">{p._id}</p>
+                    <p className="text-gray-700 mt-2">
+                      <span className="font-bold">From:</span> {p.pickupAddress}
+                    </p>
+                    <p className="text-gray-700">
+                      <span className="font-bold">To:</span> {p.deliveryAddress}
+                    </p>
+                    <p className="text-gray-700">
+                      <span className="font-bold">Payment:</span>{" "}
+                      {p.paymentType}{" "}
+                      {p.paymentType === "COD" ? `($${p.codAmount})` : ""}
+                    </p>
+                    <p className="mt-2 text-lg">
+                      <span className="font-bold">Status:</span>{" "}
+                      <strong className="text-indigo-600">{p.status}</strong>
+                    </p>
+                  </div>
+                  <div>
+                    <select
+                      onChange={(e) =>
+                        handleStatusUpdate(p._id, e.target.value)
+                      }
+                      className="w-full px-3 py-2 border bg-white border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      disabled={
+                        p.status === "Delivered" || p.status === "Failed"
+                      }
+                    >
+                      <option value="">-- Update Status --</option>
+                      <option value="Picked Up">Picked Up</option>
+                      <option value="In Transit">In Transit</option>
+                      <option value="Delivered">Delivered</option>
+                      <option value="Failed">Failed</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div style={mapContainerStyle}>
+                  <MapComponent isLoaded={isLoaded} parcel={p} />
                 </div>
               </div>
             ))}
