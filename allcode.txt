@@ -69,6 +69,102 @@ CPMC all files
 
 -------------------------------------------------------------------------------------------
 
+// client/src/components/common/MapComponent.js
+
+import React, { useState, useEffect } from "react";
+import { GoogleMap, MarkerF } from "@react-google-maps/api";
+
+const containerStyle = {
+  width: "100%",
+  height: "100%",
+  borderRadius: "0.375rem",
+};
+
+const defaultCenter = {
+  lat: 40.12,
+  lng: -100.45,
+};
+
+const MapComponent = ({
+  isLoaded,
+  parcel,
+  containerStyle: customContainerStyle,
+}) => {
+  const [pickupCoord, setPickupCoord] = useState(null);
+  const [deliveryCoord, setDeliveryCoord] = useState(null);
+  const [map, setMap] = useState(null);
+
+  useEffect(() => {
+    if (isLoaded && parcel && window.google) {
+      const geocoder = new window.google.maps.Geocoder();
+      setPickupCoord(null);
+      setDeliveryCoord(null);
+
+      geocoder.geocode({ address: parcel.pickupAddress }, (results, status) => {
+        if (status === "OK" && results[0]) {
+          const location = results[0].geometry.location;
+          setPickupCoord({ lat: location.lat(), lng: location.lng() });
+        } else {
+          console.error(`Pickup geocode failed: ${status}`);
+        }
+      });
+
+      geocoder.geocode(
+        { address: parcel.deliveryAddress },
+        (results, status) => {
+          if (status === "OK" && results[0]) {
+            const location = results[0].geometry.location;
+            setDeliveryCoord({ lat: location.lat(), lng: location.lng() });
+          } else {
+            console.error(`Delivery geocode failed: ${status}`);
+          }
+        }
+      );
+    }
+  }, [isLoaded, parcel]);
+
+  useEffect(() => {
+    if (map && pickupCoord && deliveryCoord) {
+      const bounds = new window.google.maps.LatLngBounds();
+      bounds.extend(pickupCoord);
+      bounds.extend(deliveryCoord);
+      map.fitBounds(bounds);
+    } else if (map && (pickupCoord || deliveryCoord)) {
+      map.panTo(pickupCoord || deliveryCoord);
+      map.setZoom(12);
+    }
+  }, [map, pickupCoord, deliveryCoord]);
+
+  if (!isLoaded) {
+    return (
+      <div className="flex h-full w-full items-center justify-center rounded-md bg-gray-200">
+        <p className="text-gray-500">Loading Map...</p>
+      </div>
+    );
+  }
+
+  return (
+    <GoogleMap
+      mapContainerStyle={customContainerStyle || containerStyle}
+      center={defaultCenter}
+      zoom={3}
+      onLoad={setMap}
+      onUnmount={() => setMap(null)}
+    >
+      {pickupCoord && (
+        <MarkerF position={pickupCoord} label="P" title="Pickup" />
+      )}
+      {deliveryCoord && (
+        <MarkerF position={deliveryCoord} label="D" title="Delivery" />
+      )}
+    </GoogleMap>
+  );
+};
+
+export default MapComponent;
+
+
+
 // client/src/components/common/ProtectedRoute.js
 import React from "react";
 import { Navigate, useLocation } from "react-router-dom";
@@ -95,8 +191,6 @@ const ProtectedRoute = ({ children, roles }) => {
 };
 
 export default ProtectedRoute;
-
-
 
 
 // client/src/context/AuthContext.js
@@ -143,7 +237,6 @@ export const AuthProvider = ({ children }) => {
 export default AuthContext;
 
 
-
 // client/src/hooks/useAuth.js
 import { useContext } from "react";
 import AuthContext from "../context/AuthContext";
@@ -155,48 +248,61 @@ const useAuth = () => {
 export default useAuth;
 
 
-
-
 // client/src/pages/admin/AdminDashboard.js
+
 import React, { useState, useEffect } from "react";
 import api from "../../services/api";
 import useAuth from "../../hooks/useAuth";
 import io from "socket.io-client";
+import { useJsApiLoader } from "@react-google-maps/api";
+import MapComponent from "../../components/common/MapComponent";
+
+const modalMapContainerStyle = {
+  width: "100%",
+  height: "50vh",
+};
 
 const AdminDashboard = () => {
-  const [metrics, setMetrics] = useState({}); // [cite: 171]
-  const [parcels, setParcels] = useState([]); // [cite: 171]
-  const [agents, setAgents] = useState([]); // [cite: 172]
-  const { logout } = useAuth(); // [cite: 172]
+  const [metrics, setMetrics] = useState({});
+  const [parcels, setParcels] = useState([]);
+  const [agents, setAgents] = useState([]);
+  const { logout } = useAuth();
+  const [selectedParcel, setSelectedParcel] = useState(null);
+
+  const { isLoaded } = useJsApiLoader({
+    id: "google-map-script-admin",
+    googleMapsApiKey: process.env.REACT_APP_Maps_API_KEY,
+    libraries: ["geocoding"],
+  });
 
   useEffect(() => {
     const fetchData = async () => {
-      api.get("/admin/dashboard").then((res) => setMetrics(res.data)); // [cite: 174]
-      api.get("/admin/parcels").then((res) => setParcels(res.data)); // [cite: 175]
+      api.get("/admin/dashboard").then((res) => setMetrics(res.data));
+      api.get("/admin/parcels").then((res) => setParcels(res.data));
       api
         .get("/admin/users")
         .then((res) =>
           setAgents(res.data.filter((u) => u.role === "Delivery Agent"))
-        ); // [cite: 175]
+        );
     };
     fetchData();
 
-    const socket = io("http://localhost:5001"); // [cite: 173]
+    const socket = io("http://localhost:5001");
     socket.on("new_booking", (newParcel) => {
       setParcels((prev) => [newParcel, ...prev]);
-      api.get("/admin/dashboard").then((res) => setMetrics(res.data)); // Refresh metrics
+      api.get("/admin/dashboard").then((res) => setMetrics(res.data));
     });
 
-    return () => socket.disconnect(); // [cite: 174]
+    return () => socket.disconnect();
   }, []);
 
   const handleAssignAgent = async (parcelId, agentId) => {
-    if (!agentId) return; // [cite: 176]
+    if (!agentId) return;
     try {
-      await api.put(`/admin/parcels/${parcelId}/assign`, { agentId }); // [cite: 177]
-      api.get("/admin/parcels").then((res) => setParcels(res.data)); // Refresh parcel list
+      await api.put(`/admin/parcels/${parcelId}/assign`, { agentId });
+      api.get("/admin/parcels").then((res) => setParcels(res.data));
     } catch (error) {
-      console.error("Failed to assign agent", error); // [cite: 178]
+      console.error("Failed to assign agent", error);
     }
   };
 
@@ -204,143 +310,185 @@ const AdminDashboard = () => {
     try {
       const response = await api.get(`/admin/reports/${format}`, {
         responseType: "blob",
-      }); // [cite: 179]
-      const url = window.URL.createObjectURL(new Blob([response.data])); // [cite: 180]
-      const link = document.createElement("a"); // [cite: 180]
+      });
+      const url = window.URL.createObjectURL(new Blob([response.data]));
+      const link = document.createElement("a");
       link.href = url;
-      link.setAttribute("download", `parcels-report.${format}`); // [cite: 180]
+      link.setAttribute("download", `parcels-report.${format}`);
       document.body.appendChild(link);
       link.click();
       link.remove();
     } catch (error) {
-      console.error(`Failed to export ${format} report`, error); // [cite: 181]
+      console.error(`Failed to export ${format} report`, error);
     }
   };
 
   return (
-    <div className="bg-gray-100 min-h-screen">
-      <header className="bg-white shadow-sm">
-        <div className="max-w-7xl mx-auto py-4 px-4 sm:px-6 lg:px-8 flex justify-between items-center">
-          <h1 className="text-2xl font-bold text-gray-900">Admin Dashboard</h1>
-          <button
-            onClick={logout}
-            className="bg-red-500 hover:bg-red-600 text-white font-bold py-2 px-4 rounded-md transition duration-200"
-          >
-            Logout
-          </button>
-        </div>
-      </header>
-      <main className="max-w-7xl mx-auto py-6 sm:px-6 lg:px-8">
-        {/* Metrics */}
-        <div className="mb-8">
-          <h2 className="text-xl font-semibold mb-4 text-gray-800">
-            Dashboard Metrics
-          </h2>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-            <div className="bg-white p-6 rounded-lg shadow text-center">
-              <p className="text-3xl font-bold text-blue-600">
-                {metrics.dailyBookings ?? "0"}
-              </p>
-              <p className="text-gray-600">Daily Bookings</p>
-            </div>
-            <div className="bg-white p-6 rounded-lg shadow text-center">
-              <p className="text-3xl font-bold text-red-600">
-                {metrics.failedDeliveries ?? "0"}
-              </p>
-              <p className="text-gray-600">Failed Deliveries</p>
-            </div>
-            <div className="bg-white p-6 rounded-lg shadow text-center">
-              <p className="text-3xl font-bold text-green-600">
-                ${metrics.totalCodAmount?.toFixed(2) ?? "0.00"}
-              </p>
-              <p className="text-gray-600">Total COD Received</p>
-            </div>
+    <>
+      <div className="bg-gray-100 min-h-screen">
+        <header className="bg-white shadow-sm">
+          <div className="max-w-7xl mx-auto py-4 px-4 sm:px-6 lg:px-8 flex justify-between items-center">
+            <h1 className="text-2xl font-bold text-gray-900">
+              Admin Dashboard
+            </h1>
+            <button
+              onClick={logout}
+              className="bg-red-500 hover:bg-red-600 text-white font-bold py-2 px-4 rounded-md transition duration-200"
+            >
+              Logout
+            </button>
           </div>
-        </div>
-
-        {/* All Parcels Table */}
-        <div className="bg-white p-6 rounded-lg shadow">
-          <div className="flex justify-between items-center mb-4">
-            <h2 className="text-xl font-semibold text-gray-800">
-              Manage All Parcels
+        </header>
+        <main className="max-w-7xl mx-auto py-6 sm:px-6 lg:px-8">
+          {/* Metrics */}
+          <div className="mb-8">
+            <h2 className="text-xl font-semibold mb-4 text-gray-800">
+              Dashboard Metrics
             </h2>
-            <div className="space-x-2">
-              <button
-                onClick={() => handleExport("csv")}
-                className="bg-green-600 hover:bg-green-700 text-white font-bold py-2 px-4 rounded-md text-sm transition duration-200"
-              >
-                Export CSV
-              </button>
-              <button
-                onClick={() => handleExport("pdf")}
-                className="bg-red-600 hover:bg-red-700 text-white font-bold py-2 px-4 rounded-md text-sm transition duration-200"
-              >
-                Export PDF
-              </button>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+              <div className="bg-white p-6 rounded-lg shadow text-center">
+                <p className="text-3xl font-bold text-blue-600">
+                  {metrics.dailyBookings ?? "0"}
+                </p>
+                <p className="text-gray-600">Daily Bookings</p>
+              </div>
+              <div className="bg-white p-6 rounded-lg shadow text-center">
+                <p className="text-3xl font-bold text-red-600">
+                  {metrics.failedDeliveries ?? "0"}
+                </p>
+                <p className="text-gray-600">Failed Deliveries</p>
+              </div>
+              <div className="bg-white p-6 rounded-lg shadow text-center">
+                <p className="text-3xl font-bold text-green-600">
+                  ${metrics.totalCodAmount?.toFixed(2) ?? "0.00"}
+                </p>
+                <p className="text-gray-600">Total COD Received</p>
+              </div>
             </div>
           </div>
-          <div className="overflow-x-auto">
-            <table className="min-w-full divide-y divide-gray-200">
-              <thead className="bg-gray-50">
-                <tr>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Parcel ID
-                  </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Customer
-                  </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Status
-                  </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Assigned Agent
-                  </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Assign Agent
-                  </th>
-                </tr>
-              </thead>
-              <tbody className="bg-white divide-y divide-gray-200">
-                {parcels.map((p) => (
-                  <tr key={p._id}>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm font-mono text-gray-500">
-                      {p._id}
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                      {p.customer?.name}
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap">
-                      <span className="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-blue-100 text-blue-800">
-                        {p.status}
-                      </span>
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                      {p.deliveryAgent?.name || "Unassigned"}
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm">
-                      <select
-                        onChange={(e) =>
-                          handleAssignAgent(p._id, e.target.value)
-                        }
-                        disabled={!!p.deliveryAgent}
-                        className="w-full p-2 border bg-white border-gray-300 rounded-md disabled:bg-gray-200 disabled:cursor-not-allowed"
-                      >
-                        <option value="">Select Agent</option>
-                        {agents.map((a) => (
-                          <option key={a._id} value={a._id}>
-                            {a.name}
-                          </option>
-                        ))}
-                      </select>
-                    </td>
+
+          {/* All Parcels Table */}
+          <div className="bg-white p-6 rounded-lg shadow">
+            <div className="flex justify-between items-center mb-4">
+              <h2 className="text-xl font-semibold text-gray-800">
+                Manage All Parcels
+              </h2>
+              <div className="space-x-2">
+                <button
+                  onClick={() => handleExport("csv")}
+                  className="bg-green-600 hover:bg-green-700 text-white font-bold py-2 px-4 rounded-md text-sm transition duration-200"
+                >
+                  Export CSV
+                </button>
+                {/* <button
+                  onClick={() => handleExport("pdf")}
+                  className="bg-red-600 hover:bg-red-700 text-white font-bold py-2 px-4 rounded-md text-sm transition duration-200"
+                >
+                  Export PDF
+                </button> */}
+              </div>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="min-w-full divide-y divide-gray-200">
+                <thead className="bg-gray-50">
+                  <tr>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      Parcel ID
+                    </th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      Customer
+                    </th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      Status
+                    </th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      Assigned Agent
+                    </th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      Assign Agent
+                    </th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      Route
+                    </th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody className="bg-white divide-y divide-gray-200">
+                  {parcels.map((p) => (
+                    <tr key={p._id}>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm font-mono text-gray-500">
+                        {p._id}
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                        {p.customer?.name}
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap">
+                        <span className="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-blue-100 text-blue-800">
+                          {p.status}
+                        </span>
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                        {p.deliveryAgent?.name || "Unassigned"}
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm">
+                        <select
+                          onChange={(e) =>
+                            handleAssignAgent(p._id, e.target.value)
+                          }
+                          disabled={!!p.deliveryAgent}
+                          className="w-full p-2 border bg-white border-gray-300 rounded-md disabled:bg-gray-200 disabled:cursor-not-allowed"
+                        >
+                          <option value="">Select Agent</option>
+                          {agents.map((a) => (
+                            <option key={a._id} value={a._id}>
+                              {a.name}
+                            </option>
+                          ))}
+                        </select>
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm">
+                        <button
+                          onClick={() => setSelectedParcel(p)}
+                          className="text-indigo-600 hover:text-indigo-900 font-semibold"
+                        >
+                          View Map
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </main>
+      </div>
+
+      {/* Map Modal */}
+      {selectedParcel && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex justify-center items-center p-4">
+          <div className="bg-white p-6 rounded-lg shadow-xl w-full max-w-3xl">
+            <div className="flex justify-between items-center mb-4">
+              <h3 className="text-lg font-bold">
+                Route for Parcel{" "}
+                <span className="font-mono text-gray-600">
+                  #{selectedParcel._id}
+                </span>
+              </h3>
+              <button
+                onClick={() => setSelectedParcel(null)}
+                className="text-gray-500 hover:text-gray-800 text-2xl font-bold"
+              >
+                &times;
+              </button>
+            </div>
+            <MapComponent
+              isLoaded={isLoaded}
+              parcel={selectedParcel}
+              containerStyle={modalMapContainerStyle}
+            />
           </div>
         </div>
-      </main>
-    </div>
+      )}
+    </>
   );
 };
 
@@ -349,36 +497,50 @@ export default AdminDashboard;
 
 
 // client/src/pages/agent/AgentDashboard.js
+
 import React, { useState, useEffect } from "react";
 import api from "../../services/api";
 import useAuth from "../../hooks/useAuth";
+import { useJsApiLoader } from "@react-google-maps/api";
+import MapComponent from "../../components/common/MapComponent";
+
+const mapContainerStyle = {
+  width: "100%",
+  height: "192px",
+  marginTop: "1rem",
+};
 
 const AgentDashboard = () => {
-  const [parcels, setParcels] = useState([]); // [cite: 155]
-  const { logout } = useAuth(); // [cite: 155]
+  const [parcels, setParcels] = useState([]);
+  const { logout } = useAuth();
+
+  const { isLoaded } = useJsApiLoader({
+    id: "google-map-script-agent",
+    googleMapsApiKey: process.env.REACT_APP_Maps_API_KEY,
+    libraries: ["geocoding"],
+  });
 
   useEffect(() => {
     const fetchAssignedParcels = async () => {
       try {
-        const { data } = await api.get("/agent/parcels"); // [cite: 156]
-        setParcels(data); // [cite: 156]
+        const { data } = await api.get("/agent/parcels");
+        setParcels(data);
       } catch (error) {
-        console.error("Failed to fetch assigned parcels", error); // [cite: 156]
+        console.error("Failed to fetch assigned parcels", error);
       }
     };
     fetchAssignedParcels();
-  }, []); // [cite: 157]
+  }, []);
 
   const handleStatusUpdate = async (parcelId, status) => {
-    // A mock location; in a real app, this would come from the device's GPS.
     const location = "Updated Location";
     try {
-      await api.put(`/agent/parcels/${parcelId}/status`, { status, location }); // [cite: 158]
-      setParcels(
-        (prev) => prev.map((p) => (p._id === parcelId ? { ...p, status } : p)) // [cite: 159]
+      await api.put(`/agent/parcels/${parcelId}/status`, { status, location });
+      setParcels((prev) =>
+        prev.map((p) => (p._id === parcelId ? { ...p, status } : p))
       );
     } catch (error) {
-      console.error("Failed to update status", error); // [cite: 160]
+      console.error("Failed to update status", error);
     }
   };
 
@@ -402,44 +564,55 @@ const AgentDashboard = () => {
           <h2 className="text-xl font-semibold mb-4 text-gray-800">
             My Assigned Parcels
           </h2>
-          <p className="text-gray-600">
-            Note: An optimized delivery route can be generated using Google Maps
-            API.{" "}
-          </p>
+          <p className="text-gray-600"></p>
         </div>
         {parcels.length > 0 ? (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
             {parcels.map((p) => (
-              <div key={p._id} className="bg-white p-5 rounded-lg shadow">
-                <div className="mb-4">
-                  <p className="font-mono text-sm text-gray-500">{p._id}</p>
-                  <p className="text-gray-700 mt-2">
-                    <span className="font-bold">From:</span> {p.pickupAddress}
-                  </p>
-                  <p className="text-gray-700">
-                    <span className="font-bold">To:</span> {p.deliveryAddress}
-                  </p>
-                  <p className="text-gray-700">
-                    <span className="font-bold">Payment:</span> {p.paymentType}{" "}
-                    {p.paymentType === "COD" ? `($${p.codAmount})` : ""}
-                  </p>
-                  <p className="mt-2 text-lg">
-                    <span className="font-bold">Status:</span>{" "}
-                    <strong className="text-indigo-600">{p.status}</strong>
-                  </p>
-                </div>
+              <div
+                key={p._id}
+                className="bg-white p-5 rounded-lg shadow flex flex-col justify-between"
+              >
                 <div>
-                  <select
-                    onChange={(e) => handleStatusUpdate(p._id, e.target.value)}
-                    className="w-full px-3 py-2 border bg-white border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    disabled={p.status === "Delivered" || p.status === "Failed"}
-                  >
-                    <option value="">-- Update Status --</option>
-                    <option value="Picked Up">Picked Up</option>
-                    <option value="In Transit">In Transit</option>
-                    <option value="Delivered">Delivered</option>
-                    <option value="Failed">Failed</option>
-                  </select>
+                  <div className="mb-4">
+                    <p className="font-mono text-sm text-gray-500">{p._id}</p>
+                    <p className="text-gray-700 mt-2">
+                      <span className="font-bold">From:</span> {p.pickupAddress}
+                    </p>
+                    <p className="text-gray-700">
+                      <span className="font-bold">To:</span> {p.deliveryAddress}
+                    </p>
+                    <p className="text-gray-700">
+                      <span className="font-bold">Payment:</span>{" "}
+                      {p.paymentType}{" "}
+                      {p.paymentType === "COD" ? `($${p.codAmount})` : ""}
+                    </p>
+                    <p className="mt-2 text-lg">
+                      <span className="font-bold">Status:</span>{" "}
+                      <strong className="text-indigo-600">{p.status}</strong>
+                    </p>
+                  </div>
+                  <div>
+                    <select
+                      onChange={(e) =>
+                        handleStatusUpdate(p._id, e.target.value)
+                      }
+                      className="w-full px-3 py-2 border bg-white border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      disabled={
+                        p.status === "Delivered" || p.status === "Failed"
+                      }
+                    >
+                      <option value="">-- Update Status --</option>
+                      <option value="Picked Up">Picked Up</option>
+                      <option value="In Transit">In Transit</option>
+                      <option value="Delivered">Delivered</option>
+                      <option value="Failed">Failed</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div style={mapContainerStyle}>
+                  <MapComponent isLoaded={isLoaded} parcel={p} />
                 </div>
               </div>
             ))}
@@ -694,30 +867,41 @@ const Register = () => {
 export default Register;
 
 
-
-
 // client/src/pages/customer/CustomerDashboard.js
+
 import React, { useState, useEffect } from "react";
 import api from "../../services/api";
 import useAuth from "../../hooks/useAuth";
 import io from "socket.io-client";
+import { useJsApiLoader } from "@react-google-maps/api";
+import MapComponent from "../../components/common/MapComponent";
+
+const mapContainerStyle = {
+  width: "100%",
+  height: "192px",
+};
 
 const CustomerDashboard = () => {
-  const [parcels, setParcels] = useState([]); // [cite: 132]
+  const [parcels, setParcels] = useState([]);
   const [form, setForm] = useState({
     pickupAddress: "",
     deliveryAddress: "",
     parcelDetails: { type: "Document", size: "Small" },
     paymentType: "Prepaid",
     codAmount: 0,
-  }); // [cite: 133]
-  const { logout, user } = useAuth();
+  });
+  const { logout } = useAuth();
+
+  const { isLoaded } = useJsApiLoader({
+    id: "google-map-script-customer",
+    googleMapsApiKey: process.env.REACT_APP_Maps_API_KEY,
+    libraries: ["geocoding"],
+  });
 
   useEffect(() => {
     fetchHistory();
     const socket = io("http://localhost:5001");
     socket.on("status_update", (data) => {
-      // [cite: 134]
       setParcels((prev) =>
         prev.map((p) =>
           p._id === data.parcelId
@@ -738,31 +922,31 @@ const CustomerDashboard = () => {
       );
     });
     return () => socket.disconnect();
-  }, []); // [cite: 135]
+  }, []);
 
   const fetchHistory = async () => {
     try {
-      const { data } = await api.get("/parcels/history"); // [cite: 136]
-      setParcels(data); // [cite: 137]
+      const { data } = await api.get("/parcels/history");
+      setParcels(data);
     } catch (error) {
-      console.error("Failed to fetch history", error); // [cite: 137]
+      console.error("Failed to fetch history", error);
     }
   };
 
   const handleBooking = async (e) => {
-    e.preventDefault(); // [cite: 138]
+    e.preventDefault();
     try {
-      await api.post("/parcels", form); // [cite: 139]
+      await api.post("/parcels", form);
       setForm({
         pickupAddress: "",
         deliveryAddress: "",
         parcelDetails: { type: "Document", size: "Small" },
         paymentType: "Prepaid",
         codAmount: 0,
-      }); // [cite: 140]
-      fetchHistory(); // [cite: 140]
+      });
+      fetchHistory();
     } catch (error) {
-      console.error("Booking failed", error); // [cite: 141]
+      console.error("Booking failed", error);
     }
   };
 
@@ -772,11 +956,11 @@ const CustomerDashboard = () => {
       setForm((prev) => ({
         ...prev,
         parcelDetails: { ...prev.parcelDetails, [name]: value },
-      })); // [cite: 143]
+      }));
     } else if (name === "codAmount") {
       setForm((prev) => ({ ...prev, [name]: parseFloat(value) || 0 }));
     } else {
-      setForm((prev) => ({ ...prev, [name]: value })); // [cite: 144]
+      setForm((prev) => ({ ...prev, [name]: value }));
     }
   };
 
@@ -911,13 +1095,10 @@ const CustomerDashboard = () => {
                       </div>
                       <div className="mt-4 border-t pt-4">
                         <h4 className="font-semibold text-sm mb-2">
-                          Real-time Map Tracking{" "}
+                          Route Overview
                         </h4>
-                        <div className="h-48 bg-gray-200 rounded-md flex items-center justify-center">
-                          <p className="text-gray-500">
-                            Map placeholder. Integrate @react-google-maps/api
-                            here.
-                          </p>
+                        <div style={mapContainerStyle}>
+                          <MapComponent isLoaded={isLoaded} parcel={p} />
                         </div>
                       </div>
                     </div>
@@ -938,6 +1119,7 @@ export default CustomerDashboard;
 
 
 
+
 // client/src/services/api.js
 import axios from "axios";
 
@@ -948,6 +1130,48 @@ const api = axios.create({
 export default api;
 
 
+
+/* // client/src/api.js
+ */
+
+.App {
+  text-align: center;
+}
+
+.App-logo {
+  height: 40vmin;
+  pointer-events: none;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .App-logo {
+    animation: App-logo-spin infinite 20s linear;
+  }
+}
+
+.App-header {
+  background-color: #282c34;
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  font-size: calc(10px + 2vmin);
+  color: white;
+}
+
+.App-link {
+  color: #61dafb;
+}
+
+@keyframes App-logo-spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
 
 
 // client/src/App.js
@@ -1026,6 +1250,13 @@ export default App;
 
 
 
+/* // client/src/index.css
+ */
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
 
 
 // client/src/index.js
@@ -1048,6 +1279,14 @@ root.render(
 );
 
 
+# client/.env
+
+REACT_APP_Maps_API_KEY=AIzaSyATj444wLBBRpu5nSDaATpL4qEsOd2QRu0
+
+
+
+
+-----------------------------------------------------------------------------------------------
 
 // server/config/db.js
 const mongoose = require("mongoose");
@@ -1065,7 +1304,6 @@ const connectDB = async () => {
 };
 
 module.exports = connectDB;
-
 
 
 // server/controllers/adminController.js
@@ -1251,7 +1489,6 @@ module.exports = {
 
 
 
-
 // server/controllers/agentController.js
 const Parcel = require("../models/Parcel");
 
@@ -1361,7 +1598,6 @@ const loginUser = async (req, res) => {
 };
 
 module.exports = { registerUser, loginUser };
-
 
 
 
@@ -1480,8 +1716,6 @@ const authorize = (...roles) => {
 module.exports = { protect, authorize };
 
 
-
-
 // server/models/Parcel.js
 const mongoose = require("mongoose");
 
@@ -1527,8 +1761,6 @@ const ParcelSchema = new mongoose.Schema(
 
 module.exports = mongoose.model("Parcel", ParcelSchema);
 
-
-
 // server/models/User.js
 const mongoose = require("mongoose");
 const bcrypt = require("bcryptjs");
@@ -1565,8 +1797,6 @@ UserSchema.methods.matchPassword = async function (enteredPassword) {
 module.exports = mongoose.model("User", UserSchema);
 
 
-
-
 // server/routes/adminRoutes.js
 const express = require("express");
 const {
@@ -1590,9 +1820,6 @@ router.get("/reports/csv", exportCsvReport); // [cite: 80]
 router.get("/reports/pdf", exportPdfReport); // Add the new route
 
 module.exports = router;
-
-
-
 
 // server/routes/agentRoutes.js
 const express = require("express");
@@ -1622,7 +1849,6 @@ router.post("/login", loginUser);
 module.exports = router;
 
 
-
 // server/routes/parcelRoutes.js
 const express = require("express");
 const {
@@ -1640,9 +1866,7 @@ router.route("/track/:id").get(trackParcel);
 module.exports = router;
 
 
-
 # server\.env
-
 # Environment mode
 NODE_ENV=development
 
@@ -1655,9 +1879,8 @@ MONGO_URI=mongodb+srv://smabdulmueid97:N84xvl2TDLn5F0du@cluster0.evpbyid.mongodb
 # Secret key for JWT authentication
 JWT_SECRET=jfljwfshfsdjf2853947g534t38th9notj3
 
-
-
-
+# Google Maps API Key (for reference or future server-side use)
+Maps_API_KEY=AIzaSyATj444wLBBRpu5nSDaATpL4qEsOd2QRu0
 
 
 // server/server.js
@@ -1710,6 +1933,56 @@ io.on("connection", (socket) => {
 
 const PORT = process.env.PORT || 5001;
 server.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
